@@ -1,20 +1,24 @@
 import { FlatList, StyleSheet, View } from "react-native";
 
-import { DEFAULT_ACTIONS } from "../config/defaultActions";
-import type { Step } from "../types/protocol";
+import type { Step as Action } from "../types/protocol";
 import { ActionButton } from "./ActionButton";
 
-type ActionGridProps = {
+type Props = {
+  actions: {
+    id: string;
+    label: string;
+    action: Action;
+  }[];
   isEnabled: boolean;
-  onActionPress: (action: Step) => void;
+  onActionPress: (action: Action) => void;
 };
 
-type ActionGridItem = (typeof DEFAULT_ACTIONS)[number];
+type ActionGridItem = Props["actions"][number];
 
-export const ActionGrid = ({ isEnabled, onActionPress }: ActionGridProps) => {
+export const ActionGrid = ({ actions, isEnabled, onActionPress }: Props) => {
   return (
     <FlatList<ActionGridItem>
-      data={DEFAULT_ACTIONS}
+      data={actions}
       keyExtractor={(item) => item.id}
       numColumns={3}
       scrollEnabled={false}

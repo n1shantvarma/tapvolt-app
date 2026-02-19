@@ -1,9 +1,10 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect } from "react";
-import { Button, StyleSheet, Text, View } from "react-native";
+import { Button, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { RootStackParamList } from "../app/AppNavigator";
 import { ActionGrid } from "../components/ActionGrid";
+import { PROFILES } from "../config/profiles";
 import { ConnectionState } from "../services/connectionManager";
 import { useConnectionStore } from "../store/connectionStore";
 
@@ -16,10 +17,14 @@ export const ControllerScreen = ({ navigation }: Props) => {
   const isAuthenticated = useConnectionStore((state) => state.isAuthenticated);
   const lastResult = useConnectionStore((state) => state.lastResult);
   const lastHeartbeat = useConnectionStore((state) => state.lastHeartbeat);
+  const activeProfileId = useConnectionStore((state) => state.activeProfileId);
+  const setActiveProfile = useConnectionStore((state) => state.setActiveProfile);
+  const getActiveProfile = useConnectionStore((state) => state.getActiveProfile);
   const error = useConnectionStore((state) => state.error);
   const authenticate = useConnectionStore((state) => state.authenticate);
   const sendAction = useConnectionStore((state) => state.sendAction);
   const disconnect = useConnectionStore((state) => state.disconnect);
+  const activeProfile = getActiveProfile();
 
   useEffect(() => {
     if (connectionState === ConnectionState.DISCONNECTED) {
@@ -46,6 +51,30 @@ export const ControllerScreen = ({ navigation }: Props) => {
         {lastHeartbeat ? new Date(lastHeartbeat).toLocaleTimeString() : "N/A"}
       </Text>
 
+      <View style={styles.profileSection}>
+        <Text style={styles.subtitle}>Profiles</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.profileRow}
+        >
+          {PROFILES.map((profile) => {
+            const isActive = profile.id === activeProfileId;
+            return (
+              <Pressable
+                key={profile.id}
+                style={[styles.profileButton, isActive && styles.profileButtonActive]}
+                onPress={() => setActiveProfile(profile.id)}
+              >
+                <Text style={[styles.profileButtonText, isActive && styles.profileButtonTextActive]}>
+                  {profile.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+
       <View style={styles.actions}>
         {!isAuthenticated ? (
           <>
@@ -56,7 +85,11 @@ export const ControllerScreen = ({ navigation }: Props) => {
         <Button title="Disconnect" onPress={handleDisconnect} />
       </View>
 
-      <ActionGrid isEnabled={isAuthenticated} onActionPress={sendAction} />
+      <ActionGrid
+        isEnabled={isAuthenticated}
+        actions={activeProfile.actions}
+        onActionPress={sendAction}
+      />
 
       {lastResult ? (
         <View style={styles.resultBlock}>
@@ -90,6 +123,31 @@ const styles = StyleSheet.create({
   },
   actions: {
     gap: 10,
+  },
+  profileSection: {
+    gap: 8,
+  },
+  profileRow: {
+    gap: 8,
+  },
+  profileButton: {
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#ffffff",
+  },
+  profileButtonActive: {
+    backgroundColor: "#111827",
+    borderColor: "#111827",
+  },
+  profileButtonText: {
+    color: "#111827",
+    fontWeight: "500",
+  },
+  profileButtonTextActive: {
+    color: "#ffffff",
   },
   authPrompt: {
     color: "#6b7280",

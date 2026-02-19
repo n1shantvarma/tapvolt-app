@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { PROFILES, type Profile } from "../config/profiles";
 import {
   ConnectionState,
   connectionManager,
@@ -11,6 +12,7 @@ type ActionStatus = "pending" | "success" | "failed";
 
 type ConnectionStore = {
   ipAddress: string;
+  activeProfileId: string;
   connectionState: ConnectionState;
   reconnectAttempt: number;
   isConnected: boolean;
@@ -20,6 +22,8 @@ type ConnectionStore = {
   actionStatuses: Record<string, ActionStatus>;
   error: string | null;
   setIp: (ip: string) => void;
+  setActiveProfile: (profileId: string) => void;
+  getActiveProfile: () => Profile;
   connect: () => void;
   authenticate: () => void;
   sendAction: (action: Step) => string | null;
@@ -96,6 +100,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
 
   return {
     ipAddress: "",
+    activeProfileId: PROFILES[0]?.id ?? "",
     connectionState: ConnectionState.DISCONNECTED,
     reconnectAttempt: 0,
     isConnected: false,
@@ -106,6 +111,22 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     error: null,
     setIp: (ip) => {
       set({ ipAddress: ip });
+    },
+    setActiveProfile: (profileId) => {
+      const profileExists = PROFILES.some((profile) => profile.id === profileId);
+      if (!profileExists) {
+        return;
+      }
+      set({ activeProfileId: profileId });
+    },
+    getActiveProfile: () => {
+      const activeProfileId = get().activeProfileId;
+      const profile = PROFILES.find((item) => item.id === activeProfileId);
+      if (profile) {
+        return profile;
+      }
+
+      return PROFILES[0];
     },
     connect: () => {
       const ip = get().ipAddress.trim();
