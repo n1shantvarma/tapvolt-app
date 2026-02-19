@@ -3,6 +3,8 @@ type SocketServiceCallbacks = {
   onClose?: (event: WebSocketCloseEvent) => void;
   onError?: () => void;
   onMessage?: (data: unknown) => void;
+  onConnected?: () => void;
+  onDisconnected?: () => void;
 };
 
 const noop = () => {};
@@ -10,6 +12,8 @@ const noop = () => {};
 export class SocketService {
   private socket: WebSocket | null = null;
   private callbacks: SocketServiceCallbacks = {};
+  private connected = false;
+  private authenticated = false;
 
   setCallbacks(callbacks: SocketServiceCallbacks): void {
     this.callbacks = callbacks;
@@ -24,7 +28,9 @@ export class SocketService {
 
     this.socket = new WebSocket(url);
     this.socket.onopen = () => {
+      this.connected = true;
       this.callbacks.onOpen?.();
+      this.callbacks.onConnected?.();
     };
     this.socket.onmessage = (event: WebSocketMessageEvent) => {
       this.callbacks.onMessage?.(event.data);
@@ -33,7 +39,10 @@ export class SocketService {
       this.callbacks.onError?.();
     };
     this.socket.onclose = (event: WebSocketCloseEvent) => {
+      this.connected = false;
+      this.authenticated = false;
       this.callbacks.onClose?.(event);
+      this.callbacks.onDisconnected?.();
     };
   }
 
@@ -62,4 +71,3 @@ export class SocketService {
     socket.close(code, reason);
   }
 }
-

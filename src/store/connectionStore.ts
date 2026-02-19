@@ -6,6 +6,12 @@ import {
   connectionManager,
   type ExecutionResult,
 } from "../services/connectionManager";
+import {
+  loadActiveProfile,
+  loadIp,
+  saveActiveProfile,
+  saveIp,
+} from "../services/persistence";
 import type { Step } from "../types/protocol";
 
 type ActionStatus = "pending" | "success" | "failed";
@@ -13,8 +19,10 @@ type ActionStatus = "pending" | "success" | "failed";
 type ConnectionStore = {
   ipAddress: string;
   activeProfileId: string;
+  isHydrated: boolean;
   connectionState: ConnectionState;
   reconnectAttempt: number;
+  isConnecting: boolean;
   isConnected: boolean;
   isAuthenticated: boolean;
   lastResult: ExecutionResult | null;
@@ -23,6 +31,7 @@ type ConnectionStore = {
   error: string | null;
   setIp: (ip: string) => void;
   setActiveProfile: (profileId: string) => void;
+  hydrate: () => Promise<void>;
   getActiveProfile: () => Profile;
   connect: () => void;
   authenticate: () => void;
@@ -37,13 +46,25 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
       set((state) => ({
         connectionState,
         reconnectAttempt,
-        isConnected: connectionState === ConnectionState.CONNECTED,
-        isAuthenticated:
-          connectionState === ConnectionState.CONNECTED
-            ? state.isAuthenticated
-            : false,
+        isAuthenticated: connectionState === ConnectionState.CONNECTED
+          ? state.isAuthenticated
+          : false,
         error: connectionState === ConnectionState.ERROR ? state.error : null,
       }));
+    },
+    onConnected: () => {
+      set({
+        isConnected: true,
+        isConnecting: false,
+        error: null,
+      });
+    },
+    onDisconnected: () => {
+      set({
+        isConnected: false,
+        isAuthenticated: false,
+        isConnecting: false,
+      });
     },
     onAuthSuccess: () => {
       set({
@@ -83,7 +104,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
       });
     },
     onError: (message) => {
-      set({
+      set((state) => ({
         connectionState: connectionManager.getState(),
         reconnectAttempt: connectionManager.getReconnectAttempt(),
         isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
@@ -91,8 +112,12 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
           connectionManager.getState() === ConnectionState.CONNECTED
             ? get().isAuthenticated
             : false,
+        isConnecting:
+          state.connectionState === ConnectionState.CONNECTING
+            ? false
+            : state.isConnecting,
         error: message,
-      });
+      }));
     },
   });
 
@@ -101,8 +126,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
   return {
     ipAddress: "",
     activeProfileId: PROFILES[0]?.id ?? "",
+    isHydrated: false,
     connectionState: ConnectionState.DISCONNECTED,
     reconnectAttempt: 0,
+    isConnecting: false,
     isConnected: false,
     isAuthenticated: false,
     lastResult: null,
@@ -111,6 +138,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     error: null,
     setIp: (ip) => {
       set({ ipAddress: ip });
+      void saveIp(ip);
     },
     setActiveProfile: (profileId) => {
       const profileExists = PROFILES.some((profile) => profile.id === profileId);
@@ -118,6 +146,39 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         return;
       }
       set({ activeProfileId: profileId });
+      void saveActiveProfile(profileId);
+    },
+    hydrate: async () => {
+      try {
+        const [ipAddress, activeProfileId] = await Promise.all([
+          loadIp(),
+          loadActiveProfile(),
+        ]);
+
+        set((state) => {
+          const nextState: Pick<
+            ConnectionStore,
+            "ipAddress" | "activeProfileId" | "isHydrated"
+          > = {
+            ipAddress: ipAddress ?? state.ipAddress,
+            activeProfileId: state.activeProfileId,
+            isHydrated: true,
+          };
+
+          if (activeProfileId !== null) {
+            const profileExists = PROFILES.some(
+              (profile) => profile.id === activeProfileId
+            );
+            if (profileExists) {
+              nextState.activeProfileId = activeProfileId;
+            }
+          }
+
+          return nextState;
+        });
+      } catch {
+        set({ isHydrated: true });
+      }
     },
     getActiveProfile: () => {
       const activeProfileId = get().activeProfileId;
@@ -135,7 +196,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         set({
           connectionState: ConnectionState.ERROR,
           reconnectAttempt: 0,
-          isConnected: false,
+          isConnecting: false,
           isAuthenticated: false,
           error: "IP address is required.",
         });
@@ -146,7 +207,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
       set({
         connectionState: ConnectionState.CONNECTING,
         reconnectAttempt: 0,
-        isConnected: false,
+        isConnecting: true,
         isAuthenticated: false,
         actionStatuses: {},
         lastHeartbeat: null,
@@ -159,6 +220,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         connectionState: connectionManager.getState(),
         reconnectAttempt: connectionManager.getReconnectAttempt(),
         isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
+        isConnecting: false,
         isAuthenticated: get().isAuthenticated,
         error: null,
       });
@@ -202,6 +264,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
       set({
         connectionState: ConnectionState.DISCONNECTED,
         reconnectAttempt: 0,
+        isConnecting: false,
         isConnected: false,
         isAuthenticated: false,
         lastResult: null,

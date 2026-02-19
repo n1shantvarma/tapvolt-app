@@ -47,6 +47,8 @@ export type ExecutionResult = {
 
 type ConnectionManagerCallbacks = {
   onStateChange?: (state: ConnectionState, reconnectAttempt: number) => void;
+  onConnected?: () => void;
+  onDisconnected?: () => void;
   onAuthSuccess?: () => void;
   onActionResult?: (result: ExecutionResult) => void;
   onActionTimeout?: (actionId: string) => void;
@@ -184,8 +186,8 @@ export class ConnectionManager {
 
   constructor() {
     this.socketService.setCallbacks({
-      onOpen: () => this.handleSocketOpen(),
-      onClose: () => this.handleSocketClose(),
+      onConnected: () => this.handleSocketConnected(),
+      onDisconnected: () => this.handleSocketDisconnected(),
       onError: () => this.handleSocketError("WebSocket connection error."),
       onMessage: (data) => this.handleSocketMessage(data),
     });
@@ -324,9 +326,10 @@ export class ConnectionManager {
     return sent;
   }
 
-  private handleSocketOpen(): void {
+  private handleSocketConnected(): void {
     this.reconnectAttempt = 0;
     this.setState(ConnectionState.CONNECTED);
+    this.callbacks.onConnected?.();
     this.markHeartbeatNow();
     this.startHeartbeatTimer();
 
@@ -340,7 +343,8 @@ export class ConnectionManager {
     }
   }
 
-  private handleSocketClose(): void {
+  private handleSocketDisconnected(): void {
+    this.callbacks.onDisconnected?.();
     this.clearHeartbeatTimer();
 
     if (this.reconnectSuspended) {
