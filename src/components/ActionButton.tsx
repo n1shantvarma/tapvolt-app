@@ -1,4 +1,4 @@
-import { StyleSheet, Text, TouchableOpacity } from "react-native";
+import { Pressable, StyleSheet, Text } from "react-native";
 
 type ActionButtonProps = {
   label: string;
@@ -8,14 +8,22 @@ type ActionButtonProps = {
 
 export const ActionButton = ({ label, onPress, disabled }: ActionButtonProps) => {
   return (
-    <TouchableOpacity
-      style={[styles.button, disabled && styles.disabled]}
+    <Pressable
+      style={({ pressed }) => [
+        styles.button,
+        pressed && !disabled && styles.buttonPressed,
+        disabled && styles.disabled,
+      ]}
       onPress={onPress}
       disabled={disabled}
-      activeOpacity={0.8}
+      android_disableSound={false}
     >
-      <Text style={styles.label}>{label}</Text>
-    </TouchableOpacity>
+      {({ pressed }) => (
+        <Text style={[styles.label, pressed && !disabled && styles.labelPressed]}>
+          {label.toUpperCase()}
+        </Text>
+      )}
+    </Pressable>
   );
 };
 
@@ -25,17 +33,26 @@ const styles = StyleSheet.create({
     aspectRatio: 1,
     justifyContent: "center",
     alignItems: "center",
-    borderRadius: 10,
-    backgroundColor: "#1f2937",
+    borderRadius: 0,
+    borderWidth: 3,
+    borderColor: "#111111",
+    backgroundColor: "#111111",
     padding: 8,
+  },
+  buttonPressed: {
+    backgroundColor: "#F2F2F2",
   },
   disabled: {
     opacity: 0.45,
   },
   label: {
-    color: "#ffffff",
+    color: "#F2F2F2",
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "800",
+    letterSpacing: 0.8,
     textAlign: "center",
+  },
+  labelPressed: {
+    color: "#111111",
   },
 });
