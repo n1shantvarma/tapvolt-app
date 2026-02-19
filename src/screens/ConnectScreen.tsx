@@ -1,6 +1,13 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect } from "react";
-import { Button, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  Button,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import type { RootStackParamList } from "../app/AppNavigator";
 import { ConnectionState } from "../services/connectionManager";
@@ -11,6 +18,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Connect">;
 export const ConnectScreen = ({ navigation }: Props) => {
   const ipAddress = useConnectionStore((state) => state.ipAddress);
   const isConnected = useConnectionStore((state) => state.isConnected);
+  const isConnecting = useConnectionStore((state) => state.isConnecting);
   const connectionState = useConnectionStore((state) => state.connectionState);
   const reconnectAttempt = useConnectionStore((state) => state.reconnectAttempt);
   const error = useConnectionStore((state) => state.error);
@@ -34,7 +42,8 @@ export const ConnectScreen = ({ navigation }: Props) => {
         autoCorrect={false}
         style={styles.input}
       />
-      <Button title="Connect" onPress={connect} />
+      <Button title="Connect" onPress={connect} disabled={isConnecting} />
+      {isConnecting ? <ActivityIndicator size="small" color="#111827" /> : null}
       <Text>State: {connectionState}</Text>
       {connectionState === ConnectionState.RECONNECTING ? (
         <Text>Reconnect attempt: {reconnectAttempt}/10</Text>

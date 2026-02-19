@@ -137,7 +137,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     actionStatuses: {},
     error: null,
     setIp: (ip) => {
-      set({ ipAddress: ip });
+      set({
+        ipAddress: ip,
+        error: null,
+      });
       void saveIp(ip);
     },
     setActiveProfile: (profileId) => {

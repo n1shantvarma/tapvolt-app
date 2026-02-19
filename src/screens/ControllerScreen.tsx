@@ -1,6 +1,14 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect } from "react";
-import { Button, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Button,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import type { RootStackParamList } from "../app/AppNavigator";
 import { ActionGrid } from "../components/ActionGrid";
@@ -12,6 +20,7 @@ type Props = NativeStackScreenProps<RootStackParamList, "Controller">;
 
 export const ControllerScreen = ({ navigation }: Props) => {
   const isConnected = useConnectionStore((state) => state.isConnected);
+  const isConnecting = useConnectionStore((state) => state.isConnecting);
   const connectionState = useConnectionStore((state) => state.connectionState);
   const reconnectAttempt = useConnectionStore((state) => state.reconnectAttempt);
   const isAuthenticated = useConnectionStore((state) => state.isAuthenticated);
@@ -25,6 +34,10 @@ export const ControllerScreen = ({ navigation }: Props) => {
   const sendAction = useConnectionStore((state) => state.sendAction);
   const disconnect = useConnectionStore((state) => state.disconnect);
   const activeProfile = getActiveProfile();
+  const isReconnectInProgress =
+    isConnecting || connectionState === ConnectionState.RECONNECTING;
+  const isGridEnabled = isAuthenticated && !isConnecting;
+  const visibleError = isReconnectInProgress ? null : error;
 
   useEffect(() => {
     if (connectionState === ConnectionState.DISCONNECTED) {
@@ -45,6 +58,7 @@ export const ControllerScreen = ({ navigation }: Props) => {
       {connectionState === ConnectionState.RECONNECTING ? (
         <Text>Reconnecting: attempt {reconnectAttempt}/10</Text>
       ) : null}
+      {isConnecting ? <ActivityIndicator size="small" color="#111827" /> : null}
       <Text>Authenticated: {isAuthenticated ? "Yes" : "No"}</Text>
       <Text>
         Last heartbeat:{" "}
@@ -76,17 +90,17 @@ export const ControllerScreen = ({ navigation }: Props) => {
       </View>
 
       <View style={styles.actions}>
-        {!isAuthenticated ? (
-          <>
-            <Text style={styles.authPrompt}>Authenticate first</Text>
-            <Button title="Authenticate" onPress={authenticate} />
-          </>
-        ) : null}
+        {!isAuthenticated ? <Text style={styles.authPrompt}>Authenticate first</Text> : null}
+        <Button
+          title="Authenticate"
+          onPress={authenticate}
+          disabled={isAuthenticated || isConnecting}
+        />
         <Button title="Disconnect" onPress={handleDisconnect} />
       </View>
 
       <ActionGrid
-        isEnabled={isAuthenticated}
+        isEnabled={isGridEnabled}
         actions={activeProfile.actions}
         onActionPress={sendAction}
       />
@@ -101,7 +115,7 @@ export const ControllerScreen = ({ navigation }: Props) => {
         </View>
       ) : null}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {visibleError ? <Text style={styles.error}>{visibleError}</Text> : null}
     </View>
   );
 };
