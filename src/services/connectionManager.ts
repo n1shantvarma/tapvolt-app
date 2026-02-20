@@ -1,6 +1,7 @@
 import { AppState, type AppStateStatus, type NativeEventSubscription } from "react-native";
 
 import type { Step } from "../types/protocol";
+import { getOrCreateDeviceId } from "../utils/deviceId";
 import { SocketService } from "./socketService";
 
 export enum ConnectionState {
@@ -15,6 +16,8 @@ type AuthClientMessage = {
   type: "AUTH";
   payload: {
     clientId: string;
+    deviceId: string;
+    protocolVersion: "1.0";
   };
 };
 
@@ -50,6 +53,7 @@ type ConnectionManagerCallbacks = {
   onConnected?: () => void;
   onDisconnected?: () => void;
   onAuthSuccess?: () => void;
+  onAuthFailure?: () => void;
   onActionResult?: (result: ExecutionResult) => void;
   onActionTimeout?: (actionId: string) => void;
   onError?: (message: string) => void;
@@ -179,6 +183,7 @@ export class ConnectionManager {
   private completedActionOrder: string[] = [];
   private targetUrl: string | null = null;
   private authClientId: string | null = null;
+  private authDeviceId: string | null = null;
   private appStateSubscription: NativeEventSubscription | null = null;
   private currentAppState: AppStateStatus = AppState.currentState;
   private reconnectSuspended = false;
@@ -234,20 +239,33 @@ export class ConnectionManager {
     this.setState(ConnectionState.DISCONNECTED);
   }
 
-  authenticate(clientId: string): void {
+  async authenticate(clientId: string): Promise<boolean> {
     const trimmed = clientId.trim();
     if (trimmed.length === 0) {
       this.emitError("Client ID is required.");
-      return;
+      return false;
     }
 
-    this.authClientId = trimmed;
-    this.send({
-      type: "AUTH",
-      payload: {
-        clientId: trimmed,
-      },
-    });
+    if (this.state !== ConnectionState.CONNECTED) {
+      this.emitError("WebSocket is not connected.");
+      return false;
+    }
+
+    try {
+      this.authClientId = trimmed;
+      this.authDeviceId = await getOrCreateDeviceId();
+      return this.send({
+        type: "AUTH",
+        payload: {
+          clientId: trimmed,
+          deviceId: this.authDeviceId,
+          protocolVersion: "1.0",
+        },
+      });
+    } catch {
+      this.emitError("Failed to load device identity.");
+      return false;
+    }
   }
 
   sendAction(action: Step): string | null {
@@ -334,11 +352,25 @@ export class ConnectionManager {
     this.startHeartbeatTimer();
 
     if (this.authClientId) {
-      this.send({
-        type: "AUTH",
-        payload: {
-          clientId: this.authClientId,
-        },
+      void this.ensureAuthState().then((ready) => {
+        if (!ready) {
+          return;
+        }
+
+        const clientId = this.authClientId;
+        const deviceId = this.authDeviceId;
+        if (!clientId || !deviceId) {
+          return;
+        }
+
+        this.send({
+          type: "AUTH",
+          payload: {
+            clientId,
+            deviceId,
+            protocolVersion: "1.0",
+          },
+        });
       });
     }
   }
@@ -387,6 +419,11 @@ export class ConnectionManager {
       return;
     }
 
+    if (isRecord(parsed) && parsed.type === "AUTH_FAILURE") {
+      this.callbacks.onAuthFailure?.();
+      return;
+    }
+
     if (isRecord(parsed) && parsed.type === "ERROR") {
       const payloadMessage =
         isRecord(parsed.payload) && typeof parsed.payload.message === "string"
@@ -395,6 +432,10 @@ export class ConnectionManager {
       const directMessage =
         typeof parsed.message === "string" ? parsed.message : null;
       const serverError = payloadMessage ?? directMessage ?? "Server error.";
+      if (this.isAuthError(serverError)) {
+        this.callbacks.onAuthFailure?.();
+        return;
+      }
       this.emitError(serverError);
       return;
     }
@@ -548,6 +589,37 @@ export class ConnectionManager {
 
   private emitError(message: string): void {
     this.callbacks.onError?.(message);
+  }
+
+  private async ensureAuthState(): Promise<boolean> {
+    if (!this.authClientId) {
+      return false;
+    }
+
+    if (this.state !== ConnectionState.CONNECTED) {
+      return false;
+    }
+
+    if (this.authDeviceId) {
+      return true;
+    }
+
+    try {
+      this.authDeviceId = await getOrCreateDeviceId();
+      return true;
+    } catch {
+      this.emitError("Failed to load device identity.");
+      return false;
+    }
+  }
+
+  private isAuthError(message: string): boolean {
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("auth") ||
+      normalized.includes("unauthorized") ||
+      normalized.includes("not authorized")
+    );
   }
 
   private buildActionId(): string {

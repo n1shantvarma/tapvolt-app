@@ -173,7 +173,7 @@ export const ControllerScreen = ({ navigation }: Props) => {
           ) : null}
 
           {visibleError ? (
-            <Text style={styles.error}>{visibleError.toUpperCase()}</Text>
+            <Text style={styles.error}>{visibleError.message.toUpperCase()}</Text>
           ) : null}
         </View>
 

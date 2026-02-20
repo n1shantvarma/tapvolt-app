@@ -48,7 +48,7 @@ export const ConnectScreen = ({ navigation }: Props) => {
       {connectionState === ConnectionState.RECONNECTING ? (
         <Text>Reconnect attempt: {reconnectAttempt}/10</Text>
       ) : null}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error ? <Text style={styles.error}>{error.message}</Text> : null}
     </View>
   );
 };

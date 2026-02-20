@@ -32,6 +32,8 @@ export type AuthMessage = {
   timestamp?: number;
   payload: {
     clientId: string;
+    deviceId: string;
+    protocolVersion: "1.0";
   };
 };
 
@@ -49,6 +51,15 @@ export type ClientMessage = AuthMessage | ExecuteActionMessage;
 export type AuthSuccessMessage = {
   type: "AUTH_SUCCESS";
   timestamp?: number;
+};
+
+export type AuthFailureMessage = {
+  type: "AUTH_FAILURE";
+  timestamp?: number;
+  message?: string;
+  payload?: {
+    message?: string;
+  };
 };
 
 export type ErrorMessage = {
@@ -70,6 +81,7 @@ export type ActionResultMessage = {
 
 export type ServerMessage =
   | AuthSuccessMessage
+  | AuthFailureMessage
   | ErrorMessage
   | ActionResultMessage;
 

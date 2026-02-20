@@ -13,8 +13,25 @@ import {
   saveIp,
 } from "../services/persistence";
 import type { Step } from "../types/protocol";
+import { getOrCreateDeviceId } from "../utils/deviceId";
 
 type ActionStatus = "pending" | "success" | "failed";
+type ErrorCode = "DEVICE_NOT_AUTHORIZED" | "GENERIC_CONNECTION_ERROR";
+
+type ConnectionError = {
+  code: ErrorCode;
+  message: string;
+};
+
+const DEVICE_NOT_AUTHORIZED_ERROR: ConnectionError = {
+  code: "DEVICE_NOT_AUTHORIZED",
+  message: "This device is not authorized on desktop. Please re-pair.",
+};
+
+const toConnectionError = (message: string): ConnectionError => ({
+  code: "GENERIC_CONNECTION_ERROR",
+  message,
+});
 
 type ConnectionStore = {
   ipAddress: string;
@@ -28,13 +45,13 @@ type ConnectionStore = {
   lastResult: ExecutionResult | null;
   lastHeartbeat: number | null;
   actionStatuses: Record<string, ActionStatus>;
-  error: string | null;
+  error: ConnectionError | null;
   setIp: (ip: string) => void;
   setActiveProfile: (profileId: string) => void;
   hydrate: () => Promise<void>;
   getActiveProfile: () => Profile;
   connect: () => void;
-  authenticate: () => void;
+  authenticate: () => Promise<void>;
   sendAction: (action: Step) => string | null;
   sendTestAction: () => void;
   disconnect: () => void;
@@ -75,6 +92,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
           loadIp(),
           loadActiveProfile(),
         ]);
+        await getOrCreateDeviceId();
 
         set((state) => {
           const nextState: Pick<
@@ -119,7 +137,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
           reconnectAttempt: 0,
           isConnecting: false,
           isAuthenticated: false,
-          error: "IP address is required.",
+          error: toConnectionError("IP address is required."),
         });
         return;
       }
@@ -135,15 +153,15 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         error: null,
       });
     },
-    authenticate: () => {
-      connectionManager.authenticate("mobile-client");
+    authenticate: async () => {
+      set({ error: null });
+      await connectionManager.authenticate("tapvolt-mobile");
       set({
         connectionState: connectionManager.getState(),
         reconnectAttempt: connectionManager.getReconnectAttempt(),
         isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
         isConnecting: false,
         isAuthenticated: get().isAuthenticated,
-        error: null,
       });
     },
     sendAction: (action) => {
@@ -229,6 +247,12 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       error: null,
     });
   },
+  onAuthFailure: () => {
+    useConnectionStore.setState({
+      isAuthenticated: false,
+      error: DEVICE_NOT_AUTHORIZED_ERROR,
+    });
+  },
   onActionResult: (result) => {
     useConnectionStore.setState((state) => {
       const actionStatuses = { ...state.actionStatuses };
@@ -241,7 +265,12 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
         actionStatuses,
         lastHeartbeat: connectionManager.getLastHeartbeat(),
         lastResult: result,
-        error: result.status === "success" ? null : result.error ?? state.error,
+        error:
+          result.status === "success"
+            ? null
+            : result.error
+              ? toConnectionError(result.error)
+              : state.error,
       };
     });
   },
@@ -271,7 +300,7 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
         state.connectionState === ConnectionState.CONNECTING
           ? false
           : state.isConnecting,
-      error: message,
+      error: toConnectionError(message),
     }));
   },
 };
