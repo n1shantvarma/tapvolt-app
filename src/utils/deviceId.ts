@@ -12,6 +12,7 @@ const createUuidV4 = (): string => {
 
 export async function getOrCreateDeviceId(): Promise<string> {
   const existing = await AsyncStorage.getItem(DEVICE_ID_KEY);
+  console.log("Existing device ID:", existing);
   if (existing && existing.trim().length > 0) {
     return existing;
   }
