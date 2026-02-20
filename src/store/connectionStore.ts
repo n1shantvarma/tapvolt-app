@@ -41,88 +41,6 @@ type ConnectionStore = {
 };
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => {
-  connectionManager.setCallbacks({
-    onStateChange: (connectionState, reconnectAttempt) => {
-      set((state) => ({
-        connectionState,
-        reconnectAttempt,
-        isAuthenticated: connectionState === ConnectionState.CONNECTED
-          ? state.isAuthenticated
-          : false,
-        error: connectionState === ConnectionState.ERROR ? state.error : null,
-      }));
-    },
-    onConnected: () => {
-      set({
-        isConnected: true,
-        isConnecting: false,
-        error: null,
-      });
-    },
-    onDisconnected: () => {
-      set({
-        isConnected: false,
-        isAuthenticated: false,
-        isConnecting: false,
-      });
-    },
-    onAuthSuccess: () => {
-      set({
-        connectionState: ConnectionState.CONNECTED,
-        isConnected: true,
-        isAuthenticated: true,
-        error: null,
-      });
-    },
-    onActionResult: (result) => {
-      set((state) => {
-        const actionStatuses = { ...state.actionStatuses };
-        actionStatuses[result.id] = result.status === "success" ? "success" : "failed";
-
-        return {
-          connectionState: connectionManager.getState(),
-          isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
-          isAuthenticated: state.isAuthenticated,
-          actionStatuses,
-          lastHeartbeat: connectionManager.getLastHeartbeat(),
-          lastResult: result,
-          error: result.status === "success" ? null : result.error ?? state.error,
-        };
-      });
-    },
-    onActionTimeout: (actionId) => {
-      set((state) => ({
-        actionStatuses: {
-          ...state.actionStatuses,
-          [actionId]: "failed",
-        },
-      }));
-    },
-    onHeartbeat: (timestamp) => {
-      set({
-        lastHeartbeat: timestamp,
-      });
-    },
-    onError: (message) => {
-      set((state) => ({
-        connectionState: connectionManager.getState(),
-        reconnectAttempt: connectionManager.getReconnectAttempt(),
-        isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
-        isAuthenticated:
-          connectionManager.getState() === ConnectionState.CONNECTED
-            ? get().isAuthenticated
-            : false,
-        isConnecting:
-          state.connectionState === ConnectionState.CONNECTING
-            ? false
-            : state.isConnecting,
-        error: message,
-      }));
-    },
-  });
-
-  connectionManager.initializeLifecycleHandling();
-
   return {
     ipAddress: "",
     activeProfileId: PROFILES[0]?.id ?? "",
@@ -278,3 +196,85 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     },
   };
 });
+
+const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] = {
+  onStateChange: (connectionState, reconnectAttempt) => {
+    useConnectionStore.setState((state) => ({
+      connectionState,
+      reconnectAttempt,
+      isAuthenticated:
+        connectionState === ConnectionState.CONNECTED ? state.isAuthenticated : false,
+      error: connectionState === ConnectionState.ERROR ? state.error : null,
+    }));
+  },
+  onConnected: () => {
+    useConnectionStore.setState({
+      isConnected: true,
+      isConnecting: false,
+      error: null,
+    });
+  },
+  onDisconnected: () => {
+    useConnectionStore.setState({
+      isConnected: false,
+      isAuthenticated: false,
+      isConnecting: false,
+    });
+  },
+  onAuthSuccess: () => {
+    useConnectionStore.setState({
+      connectionState: ConnectionState.CONNECTED,
+      isConnected: true,
+      isAuthenticated: true,
+      error: null,
+    });
+  },
+  onActionResult: (result) => {
+    useConnectionStore.setState((state) => {
+      const actionStatuses = { ...state.actionStatuses };
+      actionStatuses[result.id] = result.status === "success" ? "success" : "failed";
+
+      return {
+        connectionState: connectionManager.getState(),
+        isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
+        isAuthenticated: state.isAuthenticated,
+        actionStatuses,
+        lastHeartbeat: connectionManager.getLastHeartbeat(),
+        lastResult: result,
+        error: result.status === "success" ? null : result.error ?? state.error,
+      };
+    });
+  },
+  onActionTimeout: (actionId) => {
+    useConnectionStore.setState((state) => ({
+      actionStatuses: {
+        ...state.actionStatuses,
+        [actionId]: "failed",
+      },
+    }));
+  },
+  onHeartbeat: (timestamp) => {
+    useConnectionStore.setState({
+      lastHeartbeat: timestamp,
+    });
+  },
+  onError: (message) => {
+    useConnectionStore.setState((state) => ({
+      connectionState: connectionManager.getState(),
+      reconnectAttempt: connectionManager.getReconnectAttempt(),
+      isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
+      isAuthenticated:
+        connectionManager.getState() === ConnectionState.CONNECTED
+          ? useConnectionStore.getState().isAuthenticated
+          : false,
+      isConnecting:
+        state.connectionState === ConnectionState.CONNECTING
+          ? false
+          : state.isConnecting,
+      error: message,
+    }));
+  },
+};
+
+connectionManager.setCallbacks(connectionCallbacks);
+connectionManager.initializeLifecycleHandling();
