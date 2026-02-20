@@ -14,6 +14,7 @@ import {
 } from "../services/persistence";
 import type { Step } from "../types/protocol";
 import { getOrCreateDeviceId } from "../utils/deviceId";
+import { mapServerError } from "../utils/mapServerError";
 
 type ActionStatus = "pending" | "success" | "failed";
 type ErrorCode = "DEVICE_NOT_AUTHORIZED" | "GENERIC_CONNECTION_ERROR";
@@ -33,6 +34,23 @@ const toConnectionError = (message: string): ConnectionError => ({
   message,
 });
 
+const toStoreError = (error: { code: string; message: string }): ConnectionError => {
+  if (error.code === "DEVICE_NOT_AUTHORIZED") {
+    return {
+      code: "DEVICE_NOT_AUTHORIZED",
+      message: "This device is not authorized. Please re-pair.",
+    };
+  }
+
+  const mapped = mapServerError(error.code);
+
+  return {
+    code: "GENERIC_CONNECTION_ERROR",
+    message:
+      mapped.message === "Unexpected desktop error." ? error.message : mapped.message,
+  };
+};
+
 type ConnectionStore = {
   ipAddress: string;
   activeProfileId: string;
@@ -46,6 +64,7 @@ type ConnectionStore = {
   lastHeartbeat: number | null;
   actionStatuses: Record<string, ActionStatus>;
   error: ConnectionError | null;
+  warning: string | null;
   setIp: (ip: string) => void;
   setActiveProfile: (profileId: string) => void;
   hydrate: () => Promise<void>;
@@ -71,6 +90,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     lastHeartbeat: null,
     actionStatuses: {},
     error: null,
+    warning: null,
     setIp: (ip) => {
       set({
         ipAddress: ip,
@@ -151,6 +171,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         actionStatuses: {},
         lastHeartbeat: null,
         error: null,
+        warning: null,
       });
     },
     authenticate: async () => {
@@ -210,6 +231,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         lastHeartbeat: null,
         actionStatuses: {},
         error: null,
+        warning: null,
       });
     },
   };
@@ -223,6 +245,7 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       isAuthenticated:
         connectionState === ConnectionState.CONNECTED ? state.isAuthenticated : false,
       error: connectionState === ConnectionState.ERROR ? state.error : null,
+      warning: connectionState === ConnectionState.DISCONNECTED ? null : state.warning,
     }));
   },
   onConnected: () => {
@@ -230,6 +253,7 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       isConnected: true,
       isConnecting: false,
       error: null,
+      warning: null,
     });
   },
   onDisconnected: () => {
@@ -237,6 +261,7 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       isConnected: false,
       isAuthenticated: false,
       isConnecting: false,
+      warning: null,
     });
   },
   onAuthSuccess: () => {
@@ -261,16 +286,17 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       return {
         connectionState: connectionManager.getState(),
         isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
-        isAuthenticated: state.isAuthenticated,
-        actionStatuses,
-        lastHeartbeat: connectionManager.getLastHeartbeat(),
-        lastResult: result,
+      isAuthenticated: state.isAuthenticated,
+      actionStatuses,
+      lastHeartbeat: connectionManager.getLastHeartbeat(),
+      lastResult: result,
         error:
           result.status === "success"
             ? null
             : result.error
               ? toConnectionError(result.error)
               : state.error,
+        warning: state.warning,
       };
     });
   },
@@ -287,7 +313,7 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       lastHeartbeat: timestamp,
     });
   },
-  onError: (message) => {
+  onError: (error) => {
     useConnectionStore.setState((state) => ({
       connectionState: connectionManager.getState(),
       reconnectAttempt: connectionManager.getReconnectAttempt(),
@@ -300,8 +326,13 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
         state.connectionState === ConnectionState.CONNECTING
           ? false
           : state.isConnecting,
-      error: toConnectionError(message),
+      error: toStoreError(error),
     }));
+  },
+  onWarning: (warning) => {
+    useConnectionStore.setState({
+      warning,
+    });
   },
 };
 

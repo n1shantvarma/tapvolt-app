@@ -1,8 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const STORAGE_KEYS = {
-  IP_ADDRESS: "macro_ip",
-  ACTIVE_PROFILE: "macro_profile",
+  IP_ADDRESS: "tapvolt_ip",
+  ACTIVE_PROFILE: "tapvolt_profile",
 } as const;
 
 function parseStoredString(raw: string | null): string | null {

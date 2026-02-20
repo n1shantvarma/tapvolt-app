@@ -1,6 +1,7 @@
 import { AppState, type AppStateStatus, type NativeEventSubscription } from "react-native";
 
 import type { Step } from "../types/protocol";
+import { mapServerError } from "../utils/mapServerError";
 import { getOrCreateDeviceId } from "../utils/deviceId";
 import { SocketService } from "./socketService";
 
@@ -48,6 +49,11 @@ export type ExecutionResult = {
   error?: string;
 };
 
+type ConnectionErrorPayload = {
+  code: string;
+  message: string;
+};
+
 type ConnectionManagerCallbacks = {
   onStateChange?: (state: ConnectionState, reconnectAttempt: number) => void;
   onConnected?: () => void;
@@ -56,7 +62,8 @@ type ConnectionManagerCallbacks = {
   onAuthFailure?: () => void;
   onActionResult?: (result: ExecutionResult) => void;
   onActionTimeout?: (actionId: string) => void;
-  onError?: (message: string) => void;
+  onError?: (error: ConnectionErrorPayload) => void;
+  onWarning?: (message: string | null) => void;
   onHeartbeat?: (timestamp: number) => void;
 };
 
@@ -65,6 +72,8 @@ const MAX_RECONNECT_DELAY_MS = 10_000;
 const HEARTBEAT_TIMEOUT_MS = 15_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 1_000;
 const ACTION_TIMEOUT_MS = 8_000;
+const MAX_ACTION_STEPS = 50;
+const MAX_TEXT_STEP_LENGTH = 1_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -147,6 +156,20 @@ const validateExecuteActionPayload = (payload: unknown): string | null => {
     const error = validateStep(payload.steps[index], index);
     if (error) {
       return error;
+    }
+  }
+
+  return null;
+};
+
+const validateLocalActionConstraints = (steps: Step[]): ConnectionErrorPayload | null => {
+  if (steps.length > MAX_ACTION_STEPS) {
+    return mapServerError("MAX_STEPS_EXCEEDED");
+  }
+
+  for (const step of steps) {
+    if (step.type === "text" && step.value.length > MAX_TEXT_STEP_LENGTH) {
+      return mapServerError("MAX_TEXT_LENGTH_EXCEEDED");
     }
   }
 
@@ -270,9 +293,20 @@ export class ConnectionManager {
 
   sendAction(action: Step): string | null {
     const actionId = this.buildActionId();
+    const steps: Step[] = [action];
+    const localConstraintError = validateLocalActionConstraints(steps);
+    if (localConstraintError) {
+      this.emitError(localConstraintError);
+      return null;
+    }
+    if (action.type === "command") {
+      this.emitWarning("Command execution may be disabled on desktop.");
+    } else {
+      this.emitWarning(null);
+    }
     const payload = {
       id: actionId,
-      steps: [action],
+      steps,
     };
     const payloadValidationError = validateExecuteActionPayload(payload);
     if (payloadValidationError) {
@@ -330,6 +364,11 @@ export class ConnectionManager {
 
   private send(message: ClientEnvelopeMessage): boolean {
     if (message.type === "EXECUTE_ACTION") {
+      const localConstraintError = validateLocalActionConstraints(message.payload.steps);
+      if (localConstraintError) {
+        this.emitError(localConstraintError);
+        return false;
+      }
       const payloadValidationError = validateExecuteActionPayload(message.payload);
       if (payloadValidationError) {
         this.emitError(`Invalid EXECUTE_ACTION payload: ${payloadValidationError}`);
@@ -388,14 +427,17 @@ export class ConnectionManager {
   }
 
   private handleSocketError(message: string): void {
-    this.emitError(message);
+    this.emitError({ code: "SOCKET_ERROR", message });
     this.setState(ConnectionState.ERROR);
   }
 
   private handleSocketMessage(data: unknown): void {
 
     if (typeof data !== "string") {
-      this.emitError("Unsupported message format from server.");
+      this.emitError({
+        code: "INVALID_SERVER_MESSAGE",
+        message: "Unsupported message format from server.",
+      });
       return;
     }
 
@@ -425,18 +467,24 @@ export class ConnectionManager {
     }
 
     if (isRecord(parsed) && parsed.type === "ERROR") {
+      const payloadCode =
+        isRecord(parsed.payload) && typeof parsed.payload.code === "string"
+          ? parsed.payload.code
+          : null;
+      const directCode = typeof parsed.code === "string" ? parsed.code : null;
       const payloadMessage =
         isRecord(parsed.payload) && typeof parsed.payload.message === "string"
           ? parsed.payload.message
           : null;
       const directMessage =
         typeof parsed.message === "string" ? parsed.message : null;
-      const serverError = payloadMessage ?? directMessage ?? "Server error.";
-      if (this.isAuthError(serverError)) {
+      const rawServerCode = payloadCode ?? directCode ?? payloadMessage ?? directMessage ?? "";
+      const mappedServerError = mapServerError(rawServerCode);
+      if (this.isAuthError(mappedServerError.code)) {
         this.callbacks.onAuthFailure?.();
         return;
       }
-      this.emitError(serverError);
+      this.emitError(mappedServerError);
       return;
     }
 
@@ -464,7 +512,10 @@ export class ConnectionManager {
       return;
     }
 
-    this.emitError("Invalid server message shape.");
+    this.emitError({
+      code: "INVALID_SERVER_MESSAGE",
+      message: "Invalid server message shape.",
+    });
   }
 
   private removePendingAction(actionId: string): boolean {
@@ -497,7 +548,7 @@ export class ConnectionManager {
         return;
       }
 
-      this.emitError("Heartbeat timeout. Reconnecting.");
+        this.emitError("Heartbeat timeout. Reconnecting.");
       this.clearHeartbeatTimer();
       this.socketService.disconnect(4000, "Heartbeat timeout");
       this.scheduleReconnect();
@@ -587,8 +638,20 @@ export class ConnectionManager {
     };
   }
 
-  private emitError(message: string): void {
-    this.callbacks.onError?.(message);
+  private emitError(error: string | ConnectionErrorPayload): void {
+    if (typeof error === "string") {
+      this.callbacks.onError?.({
+        code: "CLIENT_ERROR",
+        message: error,
+      });
+      return;
+    }
+
+    this.callbacks.onError?.(error);
+  }
+
+  private emitWarning(message: string | null): void {
+    this.callbacks.onWarning?.(message);
   }
 
   private async ensureAuthState(): Promise<boolean> {
@@ -613,8 +676,8 @@ export class ConnectionManager {
     }
   }
 
-  private isAuthError(message: string): boolean {
-    const normalized = message.toLowerCase();
+  private isAuthError(codeOrMessage: string): boolean {
+    const normalized = codeOrMessage.toLowerCase();
     return (
       normalized.includes("auth") ||
       normalized.includes("unauthorized") ||

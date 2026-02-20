@@ -31,6 +31,7 @@ export const ControllerScreen = ({ navigation }: Props) => {
   const setActiveProfile = useConnectionStore((state) => state.setActiveProfile);
   const getActiveProfile = useConnectionStore((state) => state.getActiveProfile);
   const error = useConnectionStore((state) => state.error);
+  const warning = useConnectionStore((state) => state.warning);
   const authenticate = useConnectionStore((state) => state.authenticate);
   const sendAction = useConnectionStore((state) => state.sendAction);
   const disconnect = useConnectionStore((state) => state.disconnect);
@@ -140,6 +141,7 @@ export const ControllerScreen = ({ navigation }: Props) => {
               <Text style={styles.actionButtonText}>DISCONNECT</Text>
             </Pressable>
           </View>
+          {warning ? <Text style={styles.warningBanner}>{warning}</Text> : null}
 
           <Text style={styles.bottomSectionHeader}>ACTIONS</Text>
           <ActionGrid
@@ -393,5 +395,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.5,
     textAlign: "center",
+  },
+  warningBanner: {
+    color: "#7A4B00",
+    backgroundColor: "#FFE7B3",
+    borderWidth: 2,
+    borderColor: "#7A4B00",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.4,
   },
 });

@@ -65,7 +65,12 @@ export type AuthFailureMessage = {
 export type ErrorMessage = {
   type: "ERROR";
   timestamp?: number;
-  message: string;
+  code?: string;
+  message?: string;
+  payload?: {
+    code?: string;
+    message?: string;
+  };
 };
 
 export type ActionResultMessage = {
