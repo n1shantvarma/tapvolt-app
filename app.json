@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "TapVolt",
-    "slug": "mobile",
+    "slug": "tapvolt",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -25,6 +25,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6b25829d-4f2e-4be0-9531-540c43da9fdc"
+      }
+    },
+    "owner": "tapvolts-organization"
   }
 }
