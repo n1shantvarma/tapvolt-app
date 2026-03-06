@@ -22,6 +22,7 @@ export const ConnectScreen = ({ navigation }: Props) => {
   const connectionState = useConnectionStore((state) => state.connectionState);
   const reconnectAttempt = useConnectionStore((state) => state.reconnectAttempt);
   const error = useConnectionStore((state) => state.error);
+  const trustedDevice = useConnectionStore((state) => state.trustedDevice);
   const setIp = useConnectionStore((state) => state.setIp);
   const connect = useConnectionStore((state) => state.connect);
 
@@ -33,18 +34,29 @@ export const ConnectScreen = ({ navigation }: Props) => {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Connect to Server</Text>
+      <Text style={styles.title}>Secure Pairing</Text>
+      <Button title="Pair with QR" onPress={() => navigation.navigate("Pair")} />
       <TextInput
         value={ipAddress}
         onChangeText={setIp}
         placeholder="ws://192.168.1.20:8080"
         autoCapitalize="none"
         autoCorrect={false}
+        editable={false}
         style={styles.input}
       />
-      <Button title="Connect" onPress={connect} disabled={isConnecting} />
+      <Button
+        title={trustedDevice ? "Reconnect Trusted Device" : "Connect Trusted Device"}
+        onPress={connect}
+        disabled={isConnecting}
+      />
       {isConnecting ? <ActivityIndicator size="small" color="#111827" /> : null}
       <Text>State: {connectionState}</Text>
+      {trustedDevice ? (
+        <Text>Trusted device paired: {new Date(trustedDevice.pairedAt).toLocaleString()}</Text>
+      ) : (
+        <Text>No trusted device found. Scan desktop QR first.</Text>
+      )}
       {connectionState === ConnectionState.RECONNECTING ? (
         <Text>Reconnect attempt: {reconnectAttempt}/10</Text>
       ) : null}

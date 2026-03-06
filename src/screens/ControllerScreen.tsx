@@ -32,7 +32,7 @@ export const ControllerScreen = ({ navigation }: Props) => {
   const getActiveProfile = useConnectionStore((state) => state.getActiveProfile);
   const error = useConnectionStore((state) => state.error);
   const warning = useConnectionStore((state) => state.warning);
-  const authenticate = useConnectionStore((state) => state.authenticate);
+  const clearTrustedPairing = useConnectionStore((state) => state.clearTrustedPairing);
   const sendAction = useConnectionStore((state) => state.sendAction);
   const disconnect = useConnectionStore((state) => state.disconnect);
   const activeProfile = getActiveProfile();
@@ -116,21 +116,10 @@ export const ControllerScreen = ({ navigation }: Props) => {
           </View>
 
           {!isAuthenticated ? (
-            <Text style={styles.authPrompt}>AUTHENTICATE FIRST</Text>
+            <Text style={styles.authPrompt}>PAIRING REQUIRED</Text>
           ) : null}
 
           <View style={styles.actions}>
-            <Pressable
-              onPress={authenticate}
-              disabled={isAuthenticated || isConnecting}
-              style={({ pressed }) => [
-                styles.actionButton,
-                (isAuthenticated || isConnecting) && styles.actionButtonDisabled,
-                pressed && !(isAuthenticated || isConnecting) && styles.actionButtonPressed,
-              ]}
-            >
-              <Text style={styles.actionButtonText}>AUTHENTICATE</Text>
-            </Pressable>
             <Pressable
               onPress={handleDisconnect}
               style={({ pressed }) => [
@@ -139,6 +128,18 @@ export const ControllerScreen = ({ navigation }: Props) => {
               ]}
             >
               <Text style={styles.actionButtonText}>DISCONNECT</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                void clearTrustedPairing();
+                navigation.replace("Pair");
+              }}
+              style={({ pressed }) => [
+                styles.actionButton,
+                pressed && styles.actionButtonPressed,
+              ]}
+            >
+              <Text style={styles.actionButtonText}>RE-PAIR</Text>
             </Pressable>
           </View>
           {warning ? <Text style={styles.warningBanner}>{warning}</Text> : null}

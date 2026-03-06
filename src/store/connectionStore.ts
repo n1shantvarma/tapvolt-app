@@ -2,22 +2,33 @@ import { create } from "zustand";
 
 import { PROFILES, type Profile } from "../config/profiles";
 import {
+  parsePairingQrPayload,
+  validateTrustedDevice,
+} from "../security/pairingManager";
+import {
   ConnectionState,
   connectionManager,
   type ExecutionResult,
 } from "../services/connectionManager";
 import {
+  clearTrustedDevice,
   loadActiveProfile,
   loadIp,
+  loadTrustedDevice,
   saveActiveProfile,
   saveIp,
+  saveTrustedDevice,
 } from "../services/persistence";
+import type { PairingQrPayload, StoredTrustedDevice } from "../types/pairing";
 import type { Step } from "../types/protocol";
 import { getOrCreateDeviceId } from "../utils/deviceId";
 import { mapServerError } from "../utils/mapServerError";
 
 type ActionStatus = "pending" | "success" | "failed";
-type ErrorCode = "DEVICE_NOT_AUTHORIZED" | "GENERIC_CONNECTION_ERROR";
+type ErrorCode =
+  | "DEVICE_NOT_AUTHORIZED"
+  | "GENERIC_CONNECTION_ERROR"
+  | "PAIRING_REQUIRED";
 
 type ConnectionError = {
   code: ErrorCode;
@@ -27,6 +38,11 @@ type ConnectionError = {
 const DEVICE_NOT_AUTHORIZED_ERROR: ConnectionError = {
   code: "DEVICE_NOT_AUTHORIZED",
   message: "This device is not authorized on desktop. Please re-pair.",
+};
+
+const PAIRING_REQUIRED_ERROR: ConnectionError = {
+  code: "PAIRING_REQUIRED",
+  message: "Pairing required. Scan desktop QR to continue.",
 };
 
 const toConnectionError = (message: string): ConnectionError => ({
@@ -40,6 +56,10 @@ const toStoreError = (error: { code: string; message: string }): ConnectionError
       code: "DEVICE_NOT_AUTHORIZED",
       message: "This device is not authorized. Please re-pair.",
     };
+  }
+
+  if (error.code === "PAIRING_REQUIRED") {
+    return PAIRING_REQUIRED_ERROR;
   }
 
   const mapped = mapServerError(error.code);
@@ -65,15 +85,21 @@ type ConnectionStore = {
   actionStatuses: Record<string, ActionStatus>;
   error: ConnectionError | null;
   warning: string | null;
+  trustedDevice: StoredTrustedDevice | null;
   setIp: (ip: string) => void;
   setActiveProfile: (profileId: string) => void;
   hydrate: () => Promise<void>;
   getActiveProfile: () => Profile;
   connect: () => void;
-  authenticate: () => Promise<void>;
+  pairFromQrPayload: (rawQrPayload: string) => Promise<void>;
   sendAction: (action: Step) => string | null;
   sendTestAction: () => void;
   disconnect: () => void;
+  clearTrustedPairing: () => Promise<void>;
+};
+
+const toPairingUrl = (payload: PairingQrPayload): string => {
+  return `ws://${payload.ip}:${payload.port}`;
 };
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => {
@@ -91,6 +117,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     actionStatuses: {},
     error: null,
     warning: null,
+    trustedDevice: null,
     setIp: (ip) => {
       set({
         ipAddress: ip,
@@ -108,20 +135,24 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
     },
     hydrate: async () => {
       try {
-        const [ipAddress, activeProfileId] = await Promise.all([
+        const [ipAddress, activeProfileId, trustedDeviceRaw] = await Promise.all([
           loadIp(),
           loadActiveProfile(),
+          loadTrustedDevice(),
         ]);
-        await getOrCreateDeviceId();
+        const deviceId = await getOrCreateDeviceId();
+        const trustedDevice = validateTrustedDevice(trustedDeviceRaw);
 
         set((state) => {
           const nextState: Pick<
             ConnectionStore,
-            "ipAddress" | "activeProfileId" | "isHydrated"
+            "ipAddress" | "activeProfileId" | "isHydrated" | "trustedDevice"
           > = {
             ipAddress: ipAddress ?? state.ipAddress,
             activeProfileId: state.activeProfileId,
             isHydrated: true,
+            trustedDevice:
+              trustedDevice && trustedDevice.deviceId === deviceId ? trustedDevice : null,
           };
 
           if (activeProfileId !== null) {
@@ -131,6 +162,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
             if (profileExists) {
               nextState.activeProfileId = activeProfileId;
             }
+          }
+
+          if (trustedDevice && trustedDevice.deviceId === deviceId) {
+            nextState.ipAddress = trustedDevice.serverUrl;
           }
 
           return nextState;
@@ -149,41 +184,61 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
       return PROFILES[0];
     },
     connect: () => {
-      const ip = get().ipAddress.trim();
+      const trustedDevice = get().trustedDevice;
 
-      if (ip.length === 0) {
+      if (trustedDevice && trustedDevice.trusted) {
+        connectionManager.connect(trustedDevice.serverUrl);
         set({
-          connectionState: ConnectionState.ERROR,
+          ipAddress: trustedDevice.serverUrl,
+          connectionState: ConnectionState.CONNECTING,
           reconnectAttempt: 0,
-          isConnecting: false,
+          isConnecting: true,
           isAuthenticated: false,
-          error: toConnectionError("IP address is required."),
+          actionStatuses: {},
+          lastHeartbeat: null,
+          error: null,
+          warning: null,
         });
         return;
       }
 
-      connectionManager.connect(ip);
       set({
-        connectionState: ConnectionState.CONNECTING,
+        connectionState: ConnectionState.ERROR,
         reconnectAttempt: 0,
-        isConnecting: true,
+        isConnecting: false,
         isAuthenticated: false,
-        actionStatuses: {},
-        lastHeartbeat: null,
-        error: null,
-        warning: null,
+        error: PAIRING_REQUIRED_ERROR,
       });
     },
-    authenticate: async () => {
-      set({ error: null });
-      await connectionManager.authenticate("tapvolt-mobile");
-      set({
-        connectionState: connectionManager.getState(),
-        reconnectAttempt: connectionManager.getReconnectAttempt(),
-        isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
-        isConnecting: false,
-        isAuthenticated: get().isAuthenticated,
-      });
+    pairFromQrPayload: async (rawQrPayload) => {
+      try {
+        const qrPayload = parsePairingQrPayload(rawQrPayload);
+        const deviceId = await getOrCreateDeviceId();
+        const serverUrl = toPairingUrl(qrPayload);
+
+        connectionManager.connectWithPairingQr(qrPayload);
+        set({
+          ipAddress: serverUrl,
+          connectionState: ConnectionState.CONNECTING,
+          reconnectAttempt: 0,
+          isConnecting: true,
+          isAuthenticated: false,
+          actionStatuses: {},
+          lastHeartbeat: null,
+          error: null,
+          warning: null,
+          trustedDevice: {
+            deviceId,
+            serverUrl,
+            trusted: true,
+            pairedAt: Date.now(),
+          },
+        });
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Invalid QR payload.";
+        set({ error: toConnectionError(message) });
+      }
     },
     sendAction: (action) => {
       const actionId = connectionManager.sendAction(action);
@@ -234,6 +289,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => {
         warning: null,
       });
     },
+    clearTrustedPairing: async () => {
+      await clearTrustedDevice();
+      set({
+        trustedDevice: null,
+        isAuthenticated: false,
+      });
+    },
   };
 });
 
@@ -265,6 +327,14 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
     });
   },
   onAuthSuccess: () => {
+    const state = useConnectionStore.getState();
+    const trustedDevice = state.trustedDevice;
+
+    if (trustedDevice) {
+      void saveTrustedDevice(trustedDevice);
+      void saveIp(trustedDevice.serverUrl);
+    }
+
     useConnectionStore.setState({
       connectionState: ConnectionState.CONNECTED,
       isConnected: true,
@@ -273,8 +343,10 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
     });
   },
   onAuthFailure: () => {
+    void clearTrustedDevice();
     useConnectionStore.setState({
       isAuthenticated: false,
+      trustedDevice: null,
       error: DEVICE_NOT_AUTHORIZED_ERROR,
     });
   },
@@ -286,10 +358,10 @@ const connectionCallbacks: Parameters<typeof connectionManager.setCallbacks>[0] 
       return {
         connectionState: connectionManager.getState(),
         isConnected: connectionManager.getState() === ConnectionState.CONNECTED,
-      isAuthenticated: state.isAuthenticated,
-      actionStatuses,
-      lastHeartbeat: connectionManager.getLastHeartbeat(),
-      lastResult: result,
+        isAuthenticated: state.isAuthenticated,
+        actionStatuses,
+        lastHeartbeat: connectionManager.getLastHeartbeat(),
+        lastResult: result,
         error:
           result.status === "success"
             ? null

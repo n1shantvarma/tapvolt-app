@@ -1,5 +1,8 @@
 import { AppState, type AppStateStatus, type NativeEventSubscription } from "react-native";
 
+import { cryptoService, type EncryptedBlob } from "../security/cryptoService";
+import { buildServerUrl } from "../security/pairingManager";
+import type { PairingQrPayload } from "../types/pairing";
 import type { Step } from "../types/protocol";
 import { mapServerError } from "../utils/mapServerError";
 import { getOrCreateDeviceId } from "../utils/deviceId";
@@ -13,12 +16,20 @@ export enum ConnectionState {
   ERROR = "ERROR",
 }
 
-type AuthClientMessage = {
-  type: "AUTH";
+type PairRequestClientMessage = {
+  type: "PAIR_REQUEST";
   payload: {
-    clientId: string;
     deviceId: string;
-    protocolVersion: "1.0";
+    pairingToken: string;
+    protocolVersion: "2.0";
+  };
+};
+
+type TrustedReconnectClientMessage = {
+  type: "TRUSTED_RECONNECT";
+  payload: {
+    deviceId: string;
+    protocolVersion: "2.0";
   };
 };
 
@@ -31,16 +42,23 @@ type ExecuteActionClientMessage = {
   };
 };
 
-
 type PongClientMessage = {
   type: "PONG";
   timestamp: number;
 };
 
+type EncryptedClientMessage = {
+  type: "ENCRYPTED_MESSAGE";
+  timestamp: number;
+  payload: EncryptedBlob;
+};
+
 type ClientEnvelopeMessage =
-  | AuthClientMessage
+  | PairRequestClientMessage
+  | TrustedReconnectClientMessage
   | ExecuteActionClientMessage
-  | PongClientMessage;
+  | PongClientMessage
+  | EncryptedClientMessage;
 
 export type ExecutionResult = {
   id: string;
@@ -74,6 +92,7 @@ const HEARTBEAT_CHECK_INTERVAL_MS = 1_000;
 const ACTION_TIMEOUT_MS = 8_000;
 const MAX_ACTION_STEPS = 50;
 const MAX_TEXT_STEP_LENGTH = 1_000;
+const ENCRYPTED_MESSAGE_TYPE = "ENCRYPTED_MESSAGE";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -193,6 +212,18 @@ const buildActionTimeoutResult = (actionId: string): ExecutionResult => {
   };
 };
 
+type PairingContext =
+  | {
+      mode: "pairing";
+      pairingToken: string;
+      serverUrl: string;
+    }
+  | {
+      mode: "trusted";
+      serverUrl: string;
+    }
+  | null;
+
 export class ConnectionManager {
   private readonly socketService = new SocketService();
   private callbacks: ConnectionManagerCallbacks = {};
@@ -205,12 +236,14 @@ export class ConnectionManager {
   private completedActionIds = new Set<string>();
   private completedActionOrder: string[] = [];
   private targetUrl: string | null = null;
-  private authClientId: string | null = null;
-  private authDeviceId: string | null = null;
   private appStateSubscription: NativeEventSubscription | null = null;
   private currentAppState: AppStateStatus = AppState.currentState;
   private reconnectSuspended = false;
   private actionNonce = 0;
+  private deviceId: string | null = null;
+  private pairingContext: PairingContext = null;
+  private secureSessionKey: string | null = null;
+  private secureSessionEnabled = false;
 
   constructor() {
     this.socketService.setCallbacks({
@@ -245,6 +278,26 @@ export class ConnectionManager {
     }
 
     this.targetUrl = toWsUrl(trimmed);
+    this.pairingContext = { mode: "trusted", serverUrl: this.targetUrl };
+    this.secureSessionEnabled = false;
+    this.secureSessionKey = null;
+    this.reconnectAttempt = 0;
+    this.reconnectSuspended = false;
+    this.clearReconnectTimer();
+    this.clearPendingActions();
+    this.openSocket(ConnectionState.CONNECTING);
+  }
+
+  connectWithPairingQr(payload: PairingQrPayload): void {
+    const serverUrl = buildServerUrl(payload.ip, payload.port);
+    this.targetUrl = serverUrl;
+    this.pairingContext = {
+      mode: "pairing",
+      pairingToken: payload.pairingToken,
+      serverUrl,
+    };
+    this.secureSessionEnabled = false;
+    this.secureSessionKey = null;
     this.reconnectAttempt = 0;
     this.reconnectSuspended = false;
     this.clearReconnectTimer();
@@ -258,40 +311,22 @@ export class ConnectionManager {
     this.clearHeartbeatTimer();
     this.clearPendingActions();
     this.targetUrl = null;
+    this.secureSessionEnabled = false;
+    this.secureSessionKey = null;
+    this.pairingContext = null;
     this.socketService.disconnect();
     this.setState(ConnectionState.DISCONNECTED);
   }
 
-  async authenticate(clientId: string): Promise<boolean> {
-    const trimmed = clientId.trim();
-    if (trimmed.length === 0) {
-      this.emitError("Client ID is required.");
-      return false;
-    }
-
-    if (this.state !== ConnectionState.CONNECTED) {
-      this.emitError("WebSocket is not connected.");
-      return false;
-    }
-
-    try {
-      this.authClientId = trimmed;
-      this.authDeviceId = await getOrCreateDeviceId();
-      return this.send({
-        type: "AUTH",
-        payload: {
-          clientId: trimmed,
-          deviceId: this.authDeviceId,
-          protocolVersion: "1.0",
-        },
-      });
-    } catch {
-      this.emitError("Failed to load device identity.");
-      return false;
-    }
-  }
-
   sendAction(action: Step): string | null {
+    if (!this.secureSessionEnabled) {
+      this.emitError({
+        code: "DEVICE_NOT_AUTHORIZED",
+        message: "Pairing is required before executing actions.",
+      });
+      return null;
+    }
+
     const actionId = this.buildActionId();
     const steps: Step[] = [action];
     const localConstraintError = validateLocalActionConstraints(steps);
@@ -351,6 +386,14 @@ export class ConnectionManager {
     return this.reconnectAttempt;
   }
 
+  isSecureSessionActive(): boolean {
+    return this.secureSessionEnabled;
+  }
+
+  getTargetUrl(): string | null {
+    return this.targetUrl;
+  }
+
   private openSocket(nextState: ConnectionState): void {
     if (!this.targetUrl) {
       this.emitError("Missing target WebSocket URL.");
@@ -376,11 +419,48 @@ export class ConnectionManager {
       }
     }
 
+    if (
+      this.secureSessionEnabled &&
+      this.secureSessionKey &&
+      message.type !== "PAIR_REQUEST" &&
+      message.type !== "TRUSTED_RECONNECT" &&
+      message.type !== ENCRYPTED_MESSAGE_TYPE
+    ) {
+      const encrypted = this.encryptClientEnvelope(message);
+      if (!encrypted) {
+        return false;
+      }
+      const sentEncrypted = this.socketService.send(encrypted);
+      if (!sentEncrypted) {
+        this.emitError("WebSocket is not connected.");
+      }
+      return sentEncrypted;
+    }
+
     const sent = this.socketService.send(message);
     if (!sent) {
       this.emitError("WebSocket is not connected.");
     }
     return sent;
+  }
+
+  private encryptClientEnvelope(message: Exclude<ClientEnvelopeMessage, EncryptedClientMessage>): EncryptedClientMessage | null {
+    if (!this.secureSessionKey) {
+      this.emitError("Missing session key for encryption.");
+      return null;
+    }
+
+    try {
+      const blob = cryptoService.encryptJson(message, this.secureSessionKey);
+      return {
+        type: ENCRYPTED_MESSAGE_TYPE,
+        timestamp: Date.now(),
+        payload: blob,
+      };
+    } catch {
+      this.emitError("Failed to encrypt outgoing payload.");
+      return null;
+    }
   }
 
   private handleSocketConnected(): void {
@@ -390,28 +470,44 @@ export class ConnectionManager {
     this.markHeartbeatNow();
     this.startHeartbeatTimer();
 
-    if (this.authClientId) {
-      void this.ensureAuthState().then((ready) => {
-        if (!ready) {
-          return;
-        }
+    void this.bootstrapHandshake();
+  }
 
-        const clientId = this.authClientId;
-        const deviceId = this.authDeviceId;
-        if (!clientId || !deviceId) {
-          return;
-        }
-
-        this.send({
-          type: "AUTH",
-          payload: {
-            clientId,
-            deviceId,
-            protocolVersion: "1.0",
-          },
-        });
+  private async bootstrapHandshake(): Promise<void> {
+    if (!this.pairingContext) {
+      this.emitError({
+        code: "PAIRING_REQUIRED",
+        message: "No pairing context available. Open Pair screen and scan QR.",
       });
+      return;
     }
+
+    try {
+      this.deviceId = await getOrCreateDeviceId();
+    } catch {
+      this.emitError("Failed to load device identity.");
+      return;
+    }
+
+    if (this.pairingContext.mode === "pairing") {
+      this.send({
+        type: "PAIR_REQUEST",
+        payload: {
+          deviceId: this.deviceId,
+          pairingToken: this.pairingContext.pairingToken,
+          protocolVersion: "2.0",
+        },
+      });
+      return;
+    }
+
+    this.send({
+      type: "TRUSTED_RECONNECT",
+      payload: {
+        deviceId: this.deviceId,
+        protocolVersion: "2.0",
+      },
+    });
   }
 
   private handleSocketDisconnected(): void {
@@ -432,7 +528,6 @@ export class ConnectionManager {
   }
 
   private handleSocketMessage(data: unknown): void {
-
     if (typeof data !== "string") {
       this.emitError({
         code: "INVALID_SERVER_MESSAGE",
@@ -446,8 +541,59 @@ export class ConnectionManager {
       return;
     }
 
-    if (isRecord(parsed) && parsed.type === "PING") {
+    if (this.isEncryptedEnvelope(parsed)) {
+      if (!this.secureSessionKey) {
+        this.emitError({
+          code: "UNAUTHORIZED_PLAINTEXT",
+          message: "Encrypted message received before session establishment.",
+        });
+        return;
+      }
+
+      try {
+        const decrypted = cryptoService.decryptJson<Record<string, unknown>>(
+          parsed.payload,
+          this.secureSessionKey,
+        );
+        this.handleParsedServerMessage(decrypted, true);
+      } catch {
+        this.emitError({
+          code: "DECRYPTION_FAILED",
+          message: "Failed to decrypt server payload.",
+        });
+      }
+      return;
+    }
+
+    if (this.secureSessionEnabled) {
+      this.emitError({
+        code: "PLAINTEXT_MESSAGE_REJECTED",
+        message: "Plaintext messages are rejected after secure pairing.",
+      });
+      return;
+    }
+
+    if (!isRecord(parsed)) {
+      this.emitError({
+        code: "INVALID_SERVER_MESSAGE",
+        message: "Invalid server message shape.",
+      });
+      return;
+    }
+
+    this.handleParsedServerMessage(parsed, false);
+  }
+
+  private handleParsedServerMessage(parsed: Record<string, unknown>, encrypted: boolean): void {
+    if (parsed.type === "PING") {
       this.markHeartbeatNow();
+      if (this.secureSessionEnabled && !encrypted) {
+        this.emitError({
+          code: "PLAINTEXT_HEARTBEAT_REJECTED",
+          message: "Heartbeat must be encrypted after pairing.",
+        });
+        return;
+      }
       this.send({
         type: "PONG",
         timestamp: Date.now(),
@@ -455,18 +601,17 @@ export class ConnectionManager {
       return;
     }
 
-
-    if (isRecord(parsed) && parsed.type === "AUTH_SUCCESS") {
-      this.callbacks.onAuthSuccess?.();
+    if (parsed.type === "PAIR_SUCCESS") {
+      this.handlePairSuccess(parsed);
       return;
     }
 
-    if (isRecord(parsed) && parsed.type === "AUTH_FAILURE") {
-      this.callbacks.onAuthFailure?.();
+    if (parsed.type === "TRUSTED_RECONNECT_SUCCESS") {
+      this.handleTrustedReconnectSuccess(parsed);
       return;
     }
 
-    if (isRecord(parsed) && parsed.type === "ERROR") {
+    if (parsed.type === "ERROR") {
       const payloadCode =
         isRecord(parsed.payload) && typeof parsed.payload.code === "string"
           ? parsed.payload.code
@@ -488,7 +633,7 @@ export class ConnectionManager {
       return;
     }
 
-    if (isRecord(parsed) && parsed.type === "ACTION_RESULT") {
+    if (parsed.type === "ACTION_RESULT") {
       const payload = isRecord(parsed.payload) ? parsed.payload : null;
       if (!payload) {
         this.emitError("Invalid ACTION_RESULT payload.");
@@ -516,6 +661,69 @@ export class ConnectionManager {
       code: "INVALID_SERVER_MESSAGE",
       message: "Invalid server message shape.",
     });
+  }
+
+  private handlePairSuccess(parsed: Record<string, unknown>): void {
+    const payload = isRecord(parsed.payload) ? parsed.payload : null;
+    const sessionNonce = payload && typeof payload.sessionNonce === "string" ? payload.sessionNonce : null;
+
+    if (!sessionNonce || !this.deviceId || !this.pairingContext || this.pairingContext.mode !== "pairing") {
+      this.emitError({
+        code: "INVALID_PAIR_SUCCESS",
+        message: "PAIR_SUCCESS payload missing sessionNonce.",
+      });
+      return;
+    }
+
+    this.secureSessionKey = cryptoService.deriveSessionKey({
+      pairingToken: this.pairingContext.pairingToken,
+      deviceId: this.deviceId,
+      sessionNonce,
+    });
+    this.secureSessionEnabled = true;
+    this.callbacks.onAuthSuccess?.();
+  }
+
+  private handleTrustedReconnectSuccess(parsed: Record<string, unknown>): void {
+    const payload = isRecord(parsed.payload) ? parsed.payload : null;
+    const sessionNonce = payload && typeof payload.sessionNonce === "string" ? payload.sessionNonce : null;
+
+    if (!sessionNonce || !this.deviceId || !this.pairingContext || this.pairingContext.mode !== "trusted") {
+      this.emitError({
+        code: "INVALID_TRUSTED_RECONNECT",
+        message: "TRUSTED_RECONNECT_SUCCESS payload missing sessionNonce.",
+      });
+      return;
+    }
+
+    this.secureSessionKey = cryptoService.deriveSessionKey({
+      pairingToken: this.deviceId,
+      deviceId: this.deviceId,
+      sessionNonce,
+    });
+    this.secureSessionEnabled = true;
+    this.callbacks.onAuthSuccess?.();
+  }
+
+  private isEncryptedEnvelope(parsed: unknown): parsed is { type: "ENCRYPTED_MESSAGE"; payload: EncryptedBlob } {
+    if (!isRecord(parsed)) {
+      return false;
+    }
+
+    if (parsed.type !== ENCRYPTED_MESSAGE_TYPE) {
+      return false;
+    }
+
+    if (!isRecord(parsed.payload)) {
+      return false;
+    }
+
+    return (
+      typeof parsed.payload.iv === "string" &&
+      parsed.payload.iv.length > 0 &&
+      typeof parsed.payload.ciphertext === "string" &&
+      parsed.payload.ciphertext.length > 0
+    );
   }
 
   private removePendingAction(actionId: string): boolean {
@@ -548,7 +756,7 @@ export class ConnectionManager {
         return;
       }
 
-        this.emitError("Heartbeat timeout. Reconnecting.");
+      this.emitError("Heartbeat timeout. Reconnecting.");
       this.clearHeartbeatTimer();
       this.socketService.disconnect(4000, "Heartbeat timeout");
       this.scheduleReconnect();
@@ -589,6 +797,8 @@ export class ConnectionManager {
     this.setState(ConnectionState.RECONNECTING);
     this.clearReconnectTimer();
     this.reconnectTimer = setTimeout(() => {
+      this.secureSessionEnabled = false;
+      this.secureSessionKey = null;
       this.openSocket(ConnectionState.RECONNECTING);
     }, delay);
   }
@@ -654,34 +864,13 @@ export class ConnectionManager {
     this.callbacks.onWarning?.(message);
   }
 
-  private async ensureAuthState(): Promise<boolean> {
-    if (!this.authClientId) {
-      return false;
-    }
-
-    if (this.state !== ConnectionState.CONNECTED) {
-      return false;
-    }
-
-    if (this.authDeviceId) {
-      return true;
-    }
-
-    try {
-      this.authDeviceId = await getOrCreateDeviceId();
-      return true;
-    } catch {
-      this.emitError("Failed to load device identity.");
-      return false;
-    }
-  }
-
   private isAuthError(codeOrMessage: string): boolean {
     const normalized = codeOrMessage.toLowerCase();
     return (
       normalized.includes("auth") ||
       normalized.includes("unauthorized") ||
-      normalized.includes("not authorized")
+      normalized.includes("not authorized") ||
+      normalized.includes("device_not_authorized")
     );
   }
 

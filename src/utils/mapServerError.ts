@@ -10,6 +10,10 @@ const SERVER_ERROR_MESSAGES: Record<string, string> = {
   MAX_TEXT_LENGTH_EXCEEDED: "Text input exceeds allowed size.",
   COMMAND_EXECUTION_DISABLED: "Terminal commands are disabled on the desktop.",
   DEVICE_NOT_AUTHORIZED: "This device is not authorized. Please re-pair.",
+  PAIRING_TOKEN_EXPIRED: "Pairing token has expired. Scan a new QR code.",
+  PAIRING_TOKEN_ALREADY_USED: "Pairing token already used. Scan a new QR code.",
+  PLAINTEXT_MESSAGE_REJECTED: "Secure session required. Message rejected.",
+  PAIRING_REQUIRED: "Pairing required. Scan desktop QR.",
 };
 
 export function mapServerError(code: string): MappedServerError {

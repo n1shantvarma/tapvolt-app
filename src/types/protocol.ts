@@ -27,13 +27,22 @@ export type CommandStep = {
 
 export type Step = ShortcutStep | TextStep | DelayStep | KeyStep | CommandStep;
 
-export type AuthMessage = {
-  type: "AUTH";
+export type PairRequestMessage = {
+  type: "PAIR_REQUEST";
   timestamp?: number;
   payload: {
-    clientId: string;
     deviceId: string;
-    protocolVersion: "1.0";
+    pairingToken: string;
+    protocolVersion: "2.0";
+  };
+};
+
+export type TrustedReconnectMessage = {
+  type: "TRUSTED_RECONNECT";
+  timestamp?: number;
+  payload: {
+    deviceId: string;
+    protocolVersion: "2.0";
   };
 };
 
@@ -46,19 +55,49 @@ export type ExecuteActionMessage = {
   };
 };
 
-export type ClientMessage = AuthMessage | ExecuteActionMessage;
-
-export type AuthSuccessMessage = {
-  type: "AUTH_SUCCESS";
+export type EncryptedClientMessage = {
+  type: "ENCRYPTED_MESSAGE";
   timestamp?: number;
+  payload: {
+    iv: string;
+    ciphertext: string;
+  };
 };
 
-export type AuthFailureMessage = {
-  type: "AUTH_FAILURE";
+export type PongMessage = {
+  type: "PONG";
+  timestamp: number;
+};
+
+export type ClientMessage =
+  | PairRequestMessage
+  | TrustedReconnectMessage
+  | ExecuteActionMessage
+  | EncryptedClientMessage
+  | PongMessage;
+
+export type PairSuccessMessage = {
+  type: "PAIR_SUCCESS";
   timestamp?: number;
-  message?: string;
   payload?: {
-    message?: string;
+    sessionNonce?: string;
+  };
+};
+
+export type TrustedReconnectSuccessMessage = {
+  type: "TRUSTED_RECONNECT_SUCCESS";
+  timestamp?: number;
+  payload?: {
+    sessionNonce?: string;
+  };
+};
+
+export type EncryptedServerMessage = {
+  type: "ENCRYPTED_MESSAGE";
+  timestamp?: number;
+  payload?: {
+    iv?: string;
+    ciphertext?: string;
   };
 };
 
@@ -85,8 +124,9 @@ export type ActionResultMessage = {
 };
 
 export type ServerMessage =
-  | AuthSuccessMessage
-  | AuthFailureMessage
+  | PairSuccessMessage
+  | TrustedReconnectSuccessMessage
+  | EncryptedServerMessage
   | ErrorMessage
   | ActionResultMessage;
 

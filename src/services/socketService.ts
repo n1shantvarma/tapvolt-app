@@ -55,6 +55,15 @@ export class SocketService {
     return true;
   }
 
+  sendRaw(rawMessage: string): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    this.socket.send(rawMessage);
+    return true;
+  }
+
   disconnect(code?: number, reason?: string): void {
     if (!this.socket) {
       return;
