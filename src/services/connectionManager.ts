@@ -393,6 +393,7 @@ export class ConnectionManager {
       return;
     }
 
+    console.log("[TapVolt] Connection state:", nextState);
     this.setState(nextState);
     this.socketService.connect(this.targetUrl);
   }
@@ -421,6 +422,7 @@ export class ConnectionManager {
       if (!encrypted) {
         return false;
       }
+      console.log("[TapVolt] Sending encrypted message:", encrypted);
       const sentEncrypted = this.socketService.send(encrypted);
       if (!sentEncrypted) {
         this.emitError("WebSocket is not connected.");
@@ -528,6 +530,7 @@ export class ConnectionManager {
     }
 
     if (this.isEncryptedEnvelope(parsed)) {
+      console.log("[TapVolt] Received encrypted message:", parsed);
       if (!this.secureSessionKey) {
         this.emitError({
           code: "UNAUTHORIZED_PLAINTEXT",
@@ -541,6 +544,7 @@ export class ConnectionManager {
           parsed,
           this.secureSessionKey,
         );
+        console.log("[TapVolt] Decrypted payload:", decrypted);
         this.handleParsedServerMessage(decrypted, true);
       } catch {
         this.emitError({
@@ -661,6 +665,7 @@ export class ConnectionManager {
       return;
     }
 
+    console.log("[TapVolt] Pairing successful", sessionNonce);
     this.secureSessionKey = cryptoService.deriveSessionKey({
       pairingToken: this.pairingContext.pairingToken,
       sessionNonce,
