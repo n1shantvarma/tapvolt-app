@@ -1,5 +1,5 @@
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { BarCodeScanner, type BarCodeScannedEvent } from "expo-barcode-scanner";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Button, StyleSheet, Text, View } from "react-native";
 
@@ -9,7 +9,7 @@ import { useConnectionStore } from "../store/connectionStore";
 type Props = NativeStackScreenProps<RootStackParamList, "Pair">;
 
 export const PairScreen = ({ navigation }: Props) => {
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [permission, requestPermission] = useCameraPermissions();
   const [isPairing, setIsPairing] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
   const error = useConnectionStore((state) => state.error);
@@ -17,11 +17,14 @@ export const PairScreen = ({ navigation }: Props) => {
   const isAuthenticated = useConnectionStore((state) => state.isAuthenticated);
 
   useEffect(() => {
-    void (async () => {
-      const permission = await BarCodeScanner.requestPermissionsAsync();
-      setHasPermission(permission.status === "granted");
-    })();
-  }, []);
+    if (!permission) {
+      return;
+    }
+
+    if (!permission.granted && permission.canAskAgain) {
+      void requestPermission();
+    }
+  }, [permission, requestPermission]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -30,7 +33,7 @@ export const PairScreen = ({ navigation }: Props) => {
   }, [isAuthenticated, navigation]);
 
   const handleBarCodeScanned = useCallback(
-    async ({ data }: BarCodeScannedEvent) => {
+    async ({ data }: { data: string }) => {
       if (hasScanned || isPairing) {
         return;
       }
@@ -43,7 +46,7 @@ export const PairScreen = ({ navigation }: Props) => {
     [hasScanned, isPairing, pairFromQrPayload],
   );
 
-  if (hasPermission === null) {
+  if (!permission) {
     return (
       <View style={styles.container}>
         <Text style={styles.title}>Requesting camera permission...</Text>
@@ -51,11 +54,20 @@ export const PairScreen = ({ navigation }: Props) => {
     );
   }
 
-  if (hasPermission === false) {
+  if (!permission.granted) {
     return (
       <View style={styles.container}>
         <Text style={styles.error}>Camera access denied.</Text>
-        <Button title="Back" onPress={() => navigation.goBack()} />
+        <Button
+          title={permission.canAskAgain ? "Grant Access" : "Back"}
+          onPress={() => {
+            if (permission.canAskAgain) {
+              void requestPermission();
+              return;
+            }
+            navigation.goBack();
+          }}
+        />
       </View>
     );
   }
@@ -64,9 +76,12 @@ export const PairScreen = ({ navigation }: Props) => {
     <View style={styles.container}>
       <Text style={styles.title}>Scan Desktop Pairing QR</Text>
       <View style={styles.scannerFrame}>
-        <BarCodeScanner
-          onBarCodeScanned={hasScanned ? undefined : handleBarCodeScanned}
+        <CameraView
           style={StyleSheet.absoluteFillObject}
+          onBarcodeScanned={hasScanned ? undefined : handleBarCodeScanned}
+          barcodeScannerSettings={{
+            barcodeTypes: ["qr"],
+          }}
         />
       </View>
       {isPairing ? <ActivityIndicator size="small" color="#111827" /> : null}

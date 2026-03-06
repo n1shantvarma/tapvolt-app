@@ -55,15 +55,6 @@ export type ExecuteActionMessage = {
   };
 };
 
-export type EncryptedClientMessage = {
-  type: "ENCRYPTED_MESSAGE";
-  timestamp?: number;
-  payload: {
-    iv: string;
-    ciphertext: string;
-  };
-};
-
 export type PongMessage = {
   type: "PONG";
   timestamp: number;
@@ -73,7 +64,6 @@ export type ClientMessage =
   | PairRequestMessage
   | TrustedReconnectMessage
   | ExecuteActionMessage
-  | EncryptedClientMessage
   | PongMessage;
 
 export type PairSuccessMessage = {
@@ -92,13 +82,9 @@ export type TrustedReconnectSuccessMessage = {
   };
 };
 
-export type EncryptedServerMessage = {
-  type: "ENCRYPTED_MESSAGE";
-  timestamp?: number;
-  payload?: {
-    iv?: string;
-    ciphertext?: string;
-  };
+export type EncryptedEnvelope = {
+  iv: string;
+  encryptedPayload: string;
 };
 
 export type ErrorMessage = {
@@ -126,8 +112,7 @@ export type ActionResultMessage = {
 export type ServerMessage =
   | PairSuccessMessage
   | TrustedReconnectSuccessMessage
-  | EncryptedServerMessage
   | ErrorMessage
   | ActionResultMessage;
 
-export type SocketMessage = ClientMessage | ServerMessage;
+export type SocketMessage = ClientMessage | ServerMessage | EncryptedEnvelope;

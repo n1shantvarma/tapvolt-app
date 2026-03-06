@@ -13,9 +13,15 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "TapVolt needs camera access to scan pairing QR codes."
+      }
     },
     "android": {
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -31,6 +37,9 @@
         "projectId": "6b25829d-4f2e-4be0-9531-540c43da9fdc"
       }
     },
-    "owner": "tapvolts-organization"
+    "owner": "tapvolts-organization",
+    "plugins": [
+      "expo-camera"
+    ]
   }
 }

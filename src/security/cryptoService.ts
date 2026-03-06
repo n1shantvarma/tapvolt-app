@@ -4,7 +4,7 @@ const IV_LENGTH_BYTES = 16;
 
 export type EncryptedBlob = {
   iv: string;
-  ciphertext: string;
+  encryptedPayload: string;
 };
 
 const hashToHex = (value: string): string => {
@@ -16,10 +16,9 @@ const hashToHex = (value: string): string => {
 export class CryptoService {
   deriveSessionKey(input: {
     pairingToken: string;
-    deviceId: string;
     sessionNonce: string;
   }): string {
-    const base = `${input.pairingToken}|${input.deviceId}|${input.sessionNonce}`;
+    const base = `${input.pairingToken}${input.sessionNonce}`;
     return hashToHex(base);
   }
 
@@ -39,14 +38,14 @@ export class CryptoService {
 
     return {
       iv: forge.util.encode64(ivBytes),
-      ciphertext: forge.util.encode64(cipher.output.bytes()),
+      encryptedPayload: forge.util.encode64(cipher.output.bytes()),
     };
   }
 
   decryptJson<T>(blob: EncryptedBlob, sessionKeyHex: string): T {
     const keyBytes = forge.util.hexToBytes(sessionKeyHex);
     const ivBytes = forge.util.decode64(blob.iv);
-    const encryptedBytes = forge.util.decode64(blob.ciphertext);
+    const encryptedBytes = forge.util.decode64(blob.encryptedPayload);
     const decipher = forge.cipher.createDecipher("AES-CBC", keyBytes);
 
     decipher.start({ iv: ivBytes });

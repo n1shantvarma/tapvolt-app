@@ -47,18 +47,11 @@ type PongClientMessage = {
   timestamp: number;
 };
 
-type EncryptedClientMessage = {
-  type: "ENCRYPTED_MESSAGE";
-  timestamp: number;
-  payload: EncryptedBlob;
-};
-
 type ClientEnvelopeMessage =
   | PairRequestClientMessage
   | TrustedReconnectClientMessage
   | ExecuteActionClientMessage
-  | PongClientMessage
-  | EncryptedClientMessage;
+  | PongClientMessage;
 
 export type ExecutionResult = {
   id: string;
@@ -92,7 +85,6 @@ const HEARTBEAT_CHECK_INTERVAL_MS = 1_000;
 const ACTION_TIMEOUT_MS = 8_000;
 const MAX_ACTION_STEPS = 50;
 const MAX_TEXT_STEP_LENGTH = 1_000;
-const ENCRYPTED_MESSAGE_TYPE = "ENCRYPTED_MESSAGE";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -423,8 +415,7 @@ export class ConnectionManager {
       this.secureSessionEnabled &&
       this.secureSessionKey &&
       message.type !== "PAIR_REQUEST" &&
-      message.type !== "TRUSTED_RECONNECT" &&
-      message.type !== ENCRYPTED_MESSAGE_TYPE
+      message.type !== "TRUSTED_RECONNECT"
     ) {
       const encrypted = this.encryptClientEnvelope(message);
       if (!encrypted) {
@@ -444,19 +435,14 @@ export class ConnectionManager {
     return sent;
   }
 
-  private encryptClientEnvelope(message: Exclude<ClientEnvelopeMessage, EncryptedClientMessage>): EncryptedClientMessage | null {
+  private encryptClientEnvelope(message: ClientEnvelopeMessage): EncryptedBlob | null {
     if (!this.secureSessionKey) {
       this.emitError("Missing session key for encryption.");
       return null;
     }
 
     try {
-      const blob = cryptoService.encryptJson(message, this.secureSessionKey);
-      return {
-        type: ENCRYPTED_MESSAGE_TYPE,
-        timestamp: Date.now(),
-        payload: blob,
-      };
+      return cryptoService.encryptJson(message, this.secureSessionKey);
     } catch {
       this.emitError("Failed to encrypt outgoing payload.");
       return null;
@@ -552,7 +538,7 @@ export class ConnectionManager {
 
       try {
         const decrypted = cryptoService.decryptJson<Record<string, unknown>>(
-          parsed.payload,
+          parsed,
           this.secureSessionKey,
         );
         this.handleParsedServerMessage(decrypted, true);
@@ -677,7 +663,6 @@ export class ConnectionManager {
 
     this.secureSessionKey = cryptoService.deriveSessionKey({
       pairingToken: this.pairingContext.pairingToken,
-      deviceId: this.deviceId,
       sessionNonce,
     });
     this.secureSessionEnabled = true;
@@ -698,31 +683,22 @@ export class ConnectionManager {
 
     this.secureSessionKey = cryptoService.deriveSessionKey({
       pairingToken: this.deviceId,
-      deviceId: this.deviceId,
       sessionNonce,
     });
     this.secureSessionEnabled = true;
     this.callbacks.onAuthSuccess?.();
   }
 
-  private isEncryptedEnvelope(parsed: unknown): parsed is { type: "ENCRYPTED_MESSAGE"; payload: EncryptedBlob } {
+  private isEncryptedEnvelope(parsed: unknown): parsed is EncryptedBlob {
     if (!isRecord(parsed)) {
       return false;
     }
 
-    if (parsed.type !== ENCRYPTED_MESSAGE_TYPE) {
-      return false;
-    }
-
-    if (!isRecord(parsed.payload)) {
-      return false;
-    }
-
     return (
-      typeof parsed.payload.iv === "string" &&
-      parsed.payload.iv.length > 0 &&
-      typeof parsed.payload.ciphertext === "string" &&
-      parsed.payload.ciphertext.length > 0
+      typeof parsed.iv === "string" &&
+      parsed.iv.length > 0 &&
+      typeof parsed.encryptedPayload === "string" &&
+      parsed.encryptedPayload.length > 0
     );
   }
 
